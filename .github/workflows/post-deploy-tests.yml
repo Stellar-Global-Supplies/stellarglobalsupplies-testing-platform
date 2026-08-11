@@ -1,0 +1,47 @@
+name: Post-Deploy Tests
+
+on:
+  # Runs after a successful Cloudflare Pages / Workers deployment
+  deployment_status:
+  # Also trigger manually from GitHub UI
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Run tests for a single app (leave blank for all)'
+        required: false
+        default: ''
+
+jobs:
+  test:
+    # Only fire when CF deployment is "success"
+    if: github.event_name == 'workflow_dispatch' || github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout test repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: test-runner/package-lock.json
+
+      - name: Install dependencies
+        working-directory: test-runner
+        run: npm ci
+
+      - name: Run post-deploy tests
+        working-directory: test-runner
+        env:
+          WORKER_URL:           ${{ secrets.WORKER_URL }}
+          INGEST_TOKEN:         ${{ secrets.INGEST_TOKEN }}
+          TEST_LOGIN_EMAIL:     ${{ secrets.TEST_LOGIN_EMAIL }}
+          TEST_LOGIN_PASSWORD:  ${{ secrets.TEST_LOGIN_PASSWORD }}
+          TEST_APP:             ${{ github.event.inputs.app }}
+          TRIGGERED_BY:         github-actions
+          # GitHub sets these automatically:
+          # GITHUB_SHA, GITHUB_REF_NAME
+        run: npm test

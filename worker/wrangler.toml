@@ -1,0 +1,22 @@
+name = "sgs-test-api"
+main = "src/index.ts"
+compatibility_date = "2026-08-07"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sgs-tests"
+database_id = "7c6c857b-e310-4f2b-8841-7d0e2761e7f5"   # replace after: wrangler d1 create sgs-tests
+
+[[secrets_store_secrets]]
+binding = "INGEST_TOKEN"
+store_id = "2556bcd9458349f6b4ff2a3fc93bdba1"
+secret_name = "INGEST_TOKEN_TEST"
+
+[vars]
+DASHBOARD_ORIGIN = "https://tests.stellarglobalsupplies.com"  # update to your CF Pages URL
+
+[observability]
+enabled = true
+head_sampling_rate = 1

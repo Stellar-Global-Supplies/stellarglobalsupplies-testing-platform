@@ -1,0 +1,6 @@
+name = "sgs-tests"
+pages_build_output_dir = "dist"
+compatibility_date = "2024-09-23"
+
+# Set the three VITE_* vars as CF Pages environment variables
+# in the Cloudflare dashboard → Pages → sgs-tests → Settings → Environment variables

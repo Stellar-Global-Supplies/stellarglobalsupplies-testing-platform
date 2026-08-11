@@ -1,0 +1,15 @@
+{
+  "name": "sgs-test-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test":      "tsx src/index.ts",
+    "test:app":  "TEST_APP=$npm_config_app tsx src/index.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsx":        "^4.16.2",
+    "typescript": "^5.5.3"
+  }
+}
