@@ -198,7 +198,7 @@ export default function AppsPage() {
 
   useEffect(() => { load() }, [load])
 
-  const handleSaved = (id: string) => {
+  const handleSaved = (_id: string) => {
     setShowForm(false)
     setEditingApp(null)
     load()
