@@ -1,9 +1,13 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 
+interface SecretsStoreSecret {
+  get(): Promise<string | null>
+}
+
 type Bindings = {
   DB: D1Database
-  INGEST_TOKEN: string
+  INGEST_TOKEN: SecretsStoreSecret
   DASHBOARD_ORIGIN: string
 }
 
@@ -105,8 +109,10 @@ app.use('*', async (c, next) => {
 })
 
 const requireSecret = async (c: any, next: any) => {
-  const secret = c.req.header('X-Ingest-Token')
-  if (!secret || secret !== c.env.INGEST_TOKEN) return c.json({ error: 'Unauthorized' }, 401)
+  const incoming = c.req.header('X-Ingest-Token')
+  if (!incoming) return c.json({ error: 'Unauthorized' }, 401)
+  const stored = await c.env.INGEST_TOKEN.get()
+  if (!stored || incoming !== stored) return c.json({ error: 'Unauthorized' }, 401)
   return next()
 }
 
