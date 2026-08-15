@@ -8,6 +8,7 @@ interface SecretsStoreSecret {
 type Bindings = {
   DB: D1Database
   INGEST_TOKEN: SecretsStoreSecret
+  GITHUB_WEBHOOK_SECRET: SecretsStoreSecret
   DASHBOARD_ORIGIN: string
 }
 
@@ -298,5 +299,100 @@ app.get('/stats', async (c) => {
 })
 
 app.get('/health', (c) => c.json({ ok: true, ts: Date.now() }))
+
+// ══════════════════════════════════════════════════════════════════════════
+// GITHUB ORG WEBHOOK — auto-trigger tests on push to main/master
+// ══════════════════════════════════════════════════════════════════════════
+
+async function verifyGithubSignature(secret: string, body: string, sigHeader: string | null): Promise<boolean> {
+  if (!sigHeader?.startsWith('sha256=')) return false
+  const encoder  = new TextEncoder()
+  const key      = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const mac      = await crypto.subtle.sign('HMAC', key, encoder.encode(body))
+  const expected = 'sha256=' + Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('')
+  // constant-time compare
+  if (expected.length !== sigHeader.length) return false
+  let diff = 0
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ sigHeader.charCodeAt(i)
+  return diff === 0
+}
+
+app.post('/hooks/github', async (c) => {
+  // ── 1. Verify signature ───────────────────────────────────────────────
+  const rawBody   = await c.req.text()
+  const signature = c.req.header('X-Hub-Signature-256') ?? null
+  const secret    = await c.env.GITHUB_WEBHOOK_SECRET.get()
+
+  if (!secret) return c.json({ error: 'Webhook secret not configured' }, 500)
+  const valid = await verifyGithubSignature(secret, rawBody, signature)
+  if (!valid) return c.json({ error: 'Invalid signature' }, 401)
+
+  // ── 2. Only handle push events to main / master ───────────────────────
+  const event = c.req.header('X-GitHub-Event')
+  if (event !== 'push') return c.json({ skipped: true, reason: 'not a push event' })
+
+  let payload: { ref?: string; repository?: { name?: string }; after?: string; head_commit?: { id?: string } }
+  try { payload = JSON.parse(rawBody) } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+
+  const branch = payload.ref?.replace('refs/heads/', '')
+  if (branch !== 'main' && branch !== 'master') {
+    return c.json({ skipped: true, reason: `push to "${branch}" ignored — only main/master triggers tests` })
+  }
+
+  const repoName = payload.repository?.name
+  const gitSha   = payload.after ?? payload.head_commit?.id ?? null
+
+  if (!repoName) return c.json({ error: 'repository.name missing from payload' }, 400)
+
+  // ── 3. Find matching app in dashboard ────────────────────────────────
+  const appRow = await c.env.DB.prepare(
+    `SELECT id, name FROM app_configs WHERE name = ? AND enabled = 1`
+  ).bind(repoName).first<{ id: string; name: string }>()
+
+  if (!appRow) {
+    return c.json({ skipped: true, reason: `No enabled app found matching repo name "${repoName}"` })
+  }
+
+  // ── 4. Wait 60s for Cloudflare deployment to finish ──────────────────
+  await new Promise(resolve => setTimeout(resolve, 60_000))
+
+  // ── 5. Load full app config and run tests ────────────────────────────
+  const row = await c.env.DB.prepare(`SELECT * FROM app_configs WHERE id = ?`).bind(appRow.id).first()
+  if (!row) return c.json({ error: 'App disappeared' }, 500)
+
+  const pageUrl    = row.page_url   as string | null
+  const workerUrl  = row.worker_url as string | null
+  const apiRoutes  = row.api_routes  ? JSON.parse(row.api_routes  as string) as Array<{ path: string; expectedStatus?: number }> : []
+  const authConfig = row.auth_config ? JSON.parse(row.auth_config as string) as { url: string; body: Record<string, unknown>; expectJsonKey?: string; expectStatusCode?: number } : null
+
+  const outcomes: TestOutcome[] = []
+  if (pageUrl)   outcomes.push(await testPageUp(pageUrl))
+  if (workerUrl) outcomes.push(await testWorkerUp(workerUrl))
+  for (const route of apiRoutes) {
+    if (workerUrl) outcomes.push(await testApiRoute(workerUrl, route))
+  }
+  if (authConfig) outcomes.push(await testAuth(authConfig))
+
+  const passed = outcomes.filter(o => o.status === 'pass').length
+  const failed = outcomes.filter(o => o.status === 'fail').length
+  const status = failed === 0 ? 'passed' : 'failed'
+  const now    = Date.now()
+  const runId  = crypto.randomUUID()
+
+  await c.env.DB.prepare(`
+    INSERT INTO test_runs (id, app_id, app_name, environment, triggered_by, git_sha, git_branch, started_at, completed_at, total, passed, failed, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(runId, appRow.id, appRow.name, row.environment as string, 'github-webhook', gitSha, branch, now, Date.now(), outcomes.length, passed, failed, status).run()
+
+  const stmt = c.env.DB.prepare(`
+    INSERT INTO test_results (id, run_id, test_name, category, status, duration_ms, message, error, url, executed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  await c.env.DB.batch(outcomes.map(o =>
+    stmt.bind(crypto.randomUUID(), runId, o.test_name, o.category, o.status, o.duration_ms, o.message ?? null, o.error ?? null, o.url ?? null, o.executed_at)
+  ))
+
+  return c.json({ run_id: runId, app: appRow.name, status, passed, failed, total: outcomes.length })
+})
 
 export default app

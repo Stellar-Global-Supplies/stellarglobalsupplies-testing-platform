@@ -14,6 +14,11 @@ binding = "INGEST_TOKEN"
 store_id = "2556bcd9458349f6b4ff2a3fc93bdba1"
 secret_name = "INGEST_TOKEN_TEST"
 
+[[secrets_store_secrets]]
+binding = "GITHUB_WEBHOOK_SECRET"
+store_id = "2556bcd9458349f6b4ff2a3fc93bdba1"
+secret_name = "GITHUB_WEBHOOK_SECRET"
+
 [vars]
 DASHBOARD_ORIGIN = "https://tests.stellarglobalsupplies.com"  # update to your CF Pages URL
 
