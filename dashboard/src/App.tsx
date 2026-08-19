@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
-import Login from './components/Login'
-import Dashboard from './components/Dashboard'
+import Dashboard   from './components/Dashboard'
+import Login       from './components/Login'
+import SSOCallback from './components/SSOCallback'
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // ✅ Handle /sso-callback before any session logic
+  if (window.location.pathname === '/sso-callback') {
+    return <SSOCallback />
+  }
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -31,6 +37,7 @@ export default function App() {
     </div>
   )
 
+  // ✅ No session → Login which redirects to portal
   return session ? <Dashboard session={session} /> : <Login />
 }
 
